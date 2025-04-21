@@ -1,3 +1,4 @@
+from datetime import datetime
 from typing import List, Optional
 from bson import ObjectId
 from pymongo.database import Database
@@ -19,6 +20,8 @@ class EnrollmentRepository:
         data["cpf"] = normalize_cpf(data["cpf"])
         data["status"] = EnrollmentStatus.pending.value
         data["rejection_reason"] = None
+        data["created_at"] = datetime.utcnow()
+        data["processed_at"] = None
 
         result = self.collection.insert_one(data)
         doc = {**data, "_id": result.inserted_id}
@@ -27,15 +30,17 @@ class EnrollmentRepository:
     def update_status(self, id: str, new_status: EnrollmentStatus) -> bool:
         res = self.collection.update_one(
             {"_id": ObjectId(id)},
-            {"$set": {"status": new_status.value}},
+            {"$set": {"status": new_status.value}}
         )
         return res.modified_count > 0
 
     def update_rejection(self, id: str, reason: str) -> None:
         self.collection.update_one(
             {"_id": ObjectId(id)},
-            {"$set": {"status": EnrollmentStatus.rejected.value,
-                      "rejection_reason": reason}}
+            {"$set": {
+                "status": EnrollmentStatus.rejected.value,
+                "rejection_reason": reason
+            }}
         )
 
     def list(self) -> List[EnrollmentRead]:
@@ -50,4 +55,7 @@ class EnrollmentRepository:
         return res.deleted_count > 0
 
     def count_by_cpf_and_status(self, cpf: str, statuses: List[str]) -> int:
-        return self.collection.count_documents({"cpf": cpf, "status": {"$in": statuses}})
+        return self.collection.count_documents({
+            "cpf": cpf,
+            "status": {"$in": statuses}
+        })

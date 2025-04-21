@@ -1,7 +1,9 @@
+from datetime import datetime
 from pydantic import BaseModel, Field, field_validator, ConfigDict
 
 from app.enums.enrollment_status import EnrollmentStatus
 from app.utils.validators import normalize_cpf, is_valid_cpf
+
 
 class EnrollmentCreate(BaseModel):
     name: str
@@ -20,14 +22,20 @@ class EnrollmentCreate(BaseModel):
             raise ValueError("Invalid CPF")
         return v
 
+
 class EnrollmentRead(EnrollmentCreate):
     id: str = Field(..., description="MongoDB ObjectId as string")
     status: EnrollmentStatus = Field(
         EnrollmentStatus.pending, description="Processing status"
     )
     rejection_reason: str | None = Field(
-        None,
-        description="Reason for rejection, if applicable",
+        None, description="Reason for rejection, if applicable"
+    )
+    created_at: datetime = Field(
+        ..., description="UTC timestamp when enrollment was created"
+    )
+    processed_at: datetime | None = Field(
+        None, description="UTC timestamp when enrollment was processed"
     )
 
     model_config = ConfigDict(from_attributes=True, validate_by_name=True)
@@ -44,4 +52,6 @@ class EnrollmentRead(EnrollmentCreate):
             age=doc["age"],
             status=EnrollmentStatus(doc["status"]),
             rejection_reason=doc.get("rejection_reason"),
+            created_at=doc["created_at"],
+            processed_at=doc.get("processed_at"),
         )

@@ -1,7 +1,7 @@
 services:
   rabbitmq:
     image: rabbitmq:3-management
-    container_name: enrollmment-rabbitmq
+    container_name: enrollment-rabbitmq
     ports:
       - "5672:5672"
       - "15672:15672"
@@ -23,6 +23,25 @@ services:
       - suthub
     volumes:
       - ./:/app
+
+  processor:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: processor
+    env_file:
+      - .env
+    environment:
+      - PYTHONPATH=/app
+    command: python processor/worker.py
+    depends_on:
+      - rabbitmq
+      - enrollment-api
+    networks:
+      - suthub
+    volumes:
+      - ./:/app
+
 
 networks:
   suthub:
