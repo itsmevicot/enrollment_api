@@ -1,4 +1,5 @@
 from typing import List, Optional
+
 import pika
 
 from app.repositories.enrollment_repo import EnrollmentRepository

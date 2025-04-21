@@ -1,7 +1,7 @@
 from typing import List
 import httpx
 
-class AgeGroupClient:
+class AgeGroupsClient:
     """
     Wraps calls to the Age‑Groups API.
     """

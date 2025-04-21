@@ -1,7 +1,7 @@
 import httpx
 from fastapi import Depends
 
-from app.clients.age_group_client import AgeGroupClient
+from app.clients.age_groups_client import AgeGroupsClient
 from app.config.settings import get_settings
 from app.database.provider import DatabaseProvider
 from app.repositories.enrollment_repo import EnrollmentRepository
@@ -13,10 +13,10 @@ _http_client = httpx.Client(base_url=settings.age_groups_api_url)
 def get_http_client() -> httpx.Client:
     return _http_client
 
-def get_age_group_client(
+def get_age_groups_client(
     http_client: httpx.Client = Depends(get_http_client),
-) -> AgeGroupClient:
-    return AgeGroupClient(settings.age_groups_api_url, http_client)
+) -> AgeGroupsClient:
+    return AgeGroupsClient(settings.age_groups_api_url, http_client)
 
 def get_db():
     return DatabaseProvider.get_db()

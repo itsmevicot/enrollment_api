@@ -31,3 +31,17 @@ class EnrollmentRead(EnrollmentCreate):
     )
 
     model_config = ConfigDict(from_attributes=True, validate_by_name=True)
+
+    @classmethod
+    def from_document(cls, doc: dict) -> "EnrollmentRead":
+        """
+        Build without re‑running all validators.
+        """
+        return cls.model_construct(
+            id=str(doc["_id"]),
+            name=doc["name"],
+            cpf=doc["cpf"],
+            age=doc["age"],
+            status=EnrollmentStatus(doc["status"]),
+            rejection_reason=doc.get("rejection_reason"),
+        )

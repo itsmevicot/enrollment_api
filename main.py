@@ -7,31 +7,37 @@ from pika.exceptions import AMQPConnectionError
 
 from app.config.settings import get_settings
 from app.queue.provider import RabbitMQProvider
+from app.routers.health_router import router as health_router
 from app.routers.enrollment_router import router as enrollment_router
 
 settings = get_settings()
 
-@asynccontextmanager
-async def lifespan(app: FastAPI):
-    print(f"🔌 Starting Enrollment API, waiting for RabbitMQ on port {settings.port}")
-    max_attempts = 5
-    base_delay = 3
-
+async def _connect_rabbitmq_with_retry(
+    max_attempts: int = 5, base_delay: int = 3
+):
     for attempt in range(1, max_attempts + 1):
         try:
             RabbitMQProvider.get_channel()
-            print("✅ Connected to RabbitMQ")
-            break
+            print("Connected to RabbitMQ")
+            return
         except AMQPConnectionError:
             if attempt < max_attempts:
                 delay = attempt * base_delay
-                print(f"RabbitMQ not ready (attempt {attempt}/{max_attempts}), retrying in {delay}s…")
+                print(
+                    f"RabbitMQ not ready (attempt {attempt}/{max_attempts}), "
+                    f"retrying in {delay}s…"
+                )
                 await asyncio.sleep(delay)
             else:
-                raise RuntimeError(f"Could not connect to RabbitMQ after {max_attempts} attempts; aborting startup")
+                print(
+                    f"Could not connect to RabbitMQ after "
+                    f"{max_attempts} attempts; giving up for now."
+                )
 
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    asyncio.create_task(_connect_rabbitmq_with_retry())
     yield
-
     RabbitMQProvider.close()
     print("Shutting down Enrollment API")
 
@@ -42,7 +48,6 @@ app = FastAPI(
     redoc_url="/redoc",
     lifespan=lifespan,
 )
-
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
@@ -50,5 +55,5 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
-
+app.include_router(health_router)
 app.include_router(enrollment_router)

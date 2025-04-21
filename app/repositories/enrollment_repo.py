@@ -4,6 +4,7 @@ from pymongo.database import Database
 
 from app.enums.enrollment_status import EnrollmentStatus
 from app.schemas.enrollment_schema import EnrollmentRead, EnrollmentCreate
+from app.utils.validators import normalize_cpf
 
 
 class EnrollmentRepository:
@@ -11,23 +12,17 @@ class EnrollmentRepository:
         self.collection = db["enrollments"]
 
     def _doc_to_model(self, doc) -> EnrollmentRead:
-        return EnrollmentRead(
-            id=str(doc["_id"]),
-            name=doc["name"],
-            cpf=doc["cpf"],
-            age=doc["age"],
-            status=EnrollmentStatus(doc["status"]),
-            rejection_reason=doc.get("rejection_reason"),
-        )
+        return EnrollmentRead.from_document(doc)
 
     def create(self, payload: EnrollmentCreate) -> EnrollmentRead:
         data = payload.model_dump()
+        data["cpf"] = normalize_cpf(data["cpf"])
         data["status"] = EnrollmentStatus.pending.value
         data["rejection_reason"] = None
+
         result = self.collection.insert_one(data)
         doc = {**data, "_id": result.inserted_id}
         return self._doc_to_model(doc)
-
 
     def update_status(self, id: str, new_status: EnrollmentStatus) -> bool:
         res = self.collection.update_one(
@@ -45,7 +40,6 @@ class EnrollmentRepository:
 
     def list(self) -> List[EnrollmentRead]:
         return [self._doc_to_model(doc) for doc in self.collection.find()]
-
 
     def get(self, id: str) -> Optional[EnrollmentRead]:
         doc = self.collection.find_one({"_id": ObjectId(id)})
