@@ -1,0 +1,29 @@
+services:
+  rabbitmq:
+    image: rabbitmq:3-management
+    container_name: enrollmment-rabbitmq
+    ports:
+      - "5672:5672"
+      - "15672:15672"
+    networks:
+      - suthub
+
+  enrollment-api:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: enrollment-api
+    env_file:
+      - .env
+    ports:
+      - "${PORT}:8000"
+    depends_on:
+      - rabbitmq
+    networks:
+      - suthub
+    volumes:
+      - ./:/app
+
+networks:
+  suthub:
+    external: true
