@@ -1,107 +1,108 @@
-# Age Groups API
+# Enrollment API  
 
-This is a simple CRUD microservice for managing age groups.
+This is the **Enrollment API**, a FastAPI service for handling enrollment requests.  
+It works in tandem with the [Age Groups API](https://github.com/itsmevicot/age_groups_api), which provides the valid age ranges for acceptance.  
+The Enrollment API writes new requests to MongoDB, publishes them to RabbitMQ, and processes them via a standalone worker.  
 
-## Overview
+---
 
-- Built with FastAPI and MongoDB (with `mongomock` for tests).
-- Dependency injection via FastAPI `Depends` pattern.
-- Comprehensive pytest suite with automatic collection cleanup.
+## Architecture Overview
 
-## Prerequisites
-
-- Python 3.10+
-- [Docker](https://www.docker.com/) & [Docker Compose](https://docs.docker.com/compose/) (optional, for containerized deployment)
-
-## Installation
-
-1. Clone the repository:
-   ```bash
-   git clone https://github.com/itsmevicot/age_groups_api.git
-   cd age_groups_api
-   ```
-
-2. Create a virtual environment and install dependencies:
-   ```bash
-   python -m venv venv
-   source venv/bin/activate      # Linux/macOS
-   venv\Scripts\activate       # Windows
-   pip install --upgrade pip
-   pip install -r requirements.txt
-   ```
-
-## Configuration
-
-Copy the sample environment file and adjust values if needed:
-```bash
-cp .env .env.example
+```mermaid
+flowchart LR
+  Client -->|POST /enrollments| EnrollmentAPI[FastAPI Enrollment API]
+  EnrollmentAPI --> Mongo[(MongoDB)]
+  EnrollmentAPI --> Rabbit[(RabbitMQ)]
+  Rabbit --> Worker[Enrollment Worker]
+  Worker --> Mongo[(MongoDB)]
+  Worker -->|HTTP| AgeAPI[Age Groups API]
 ```
 
-## Running the API
+1. **API** writes the enrollment document to MongoDB with `status = pending`, then publishes the new ID to RabbitMQ.  
+2. **Worker** (standalone script) consumes the queue, calls the EnrollmentAPI over HTTP, and updates the document in MongoDB to `approved`, `rejected`, or `failed`, recording timestamps.  
 
-### 1. Without Docker
+---
+
+## Getting Started  
+
+### Prerequisites  
+
+- Docker & Docker Compose  
+- `.env` file in project root with the following variables:
+  ```dotenv
+  ENVIRONMENT=development
+  PORT=8001
+  MONGO_URI=mongodb://mongo:27017/age_groups_db
+  MONGO_DB_NAME=age_groups_db
+  RABBIT_URI=amqp://guest:guest@rabbitmq:5672/
+  RABBIT_QUEUE_NAME=enrollments
+  AGE_GROUPS_API_URL=http://age-groups-api:8000
+  ```
+
+### Running Locally with Docker Compose  
 
 ```bash
-uvicorn main:app --host 0.0.0.0 --port ${PORT:-8000} --reload
+# build and start all services
+docker-compose up --build
 ```
 
-- The `--reload` flag enables hot-reload on code changes.
-- Open your browser to `http://localhost:8000/docs` for the interactive Swagger UI.
+This brings up:
 
-### 2. With Docker Compose
+- **enrollment-api** on `http://localhost:${PORT}`  
+- **rabbitmq** management UI on `http://localhost:15672` (guest/guest)  
+- **processor** worker consuming enrollment messages  
 
-Start MongoDB and the API:
-```bash
-docker-compose up -d
-```
 
-Follow the API logs:
-```bash
-docker-compose logs -f api
-```
+### API Endpoints  
 
-Stop everything:
-```bash
-docker-compose down
-```
+| Method | Path                | Description                           |
+|--------|---------------------|---------------------------------------|
+| GET    | `/health`           | Health check (Mongo & Rabbit)         |
+| POST   | `/enrollments/`     | Create new enrollment (pending)       |
+| GET    | `/enrollments/`     | List all enrollments                  |
+| GET    | `/enrollments/{id}` | Fetch a single enrollment by ID       |
+| DELETE | `/enrollments/{id}` | Delete an enrollment                  |
 
-## API Endpoints
+### Testing  
 
-| Method | Path                 | Description                       |
-| ------ | -------------------- | --------------------------------- |
-| POST   | `/age-groups/`       | Create a new age group            |
-| GET    | `/age-groups/`       | List all age groups               |
-| GET    | `/age-groups/{id}`   | Get a single age group by ID      |
-| DELETE | `/age-groups/{id}`   | Delete an age group by ID         |
-
-### Example cURL
+Run integrated tests with Pytest:
 
 ```bash
-# Create
-curl -X POST http://localhost:8000/age-groups/ \
-  -H "Content-Type: application/json" \
-  -d '{"name":"Kids","min_age":0,"max_age":12}'
-
-# List
-curl http://localhost:8000/age-groups/
-
-# Get
-curl http://localhost:8000/age-groups/{id}
-
-# Delete
-curl -X DELETE http://localhost:8000/age-groups/{id}
-```
-
-## Running Tests
-
-Tests use `mongomock` under the hood—no real MongoDB is required.
-
-```bash
-# in your activated virtualenv or container
+# inside the api container
+docker-compose exec enrollment-api pytest
+# or on host:
 pytest
 ```
 
-Or via Docker Compose:
-```bash
-docker-compose exec api pytest
-```
+All business rules are covered by tests in `app/tests/test_enrollment.py`.
+
+---
+
+## Business Rules Summary  
+
+1. **CPF Validation & Normalization**  
+   - CPF strings are stripped to digits only and validated. Invalid CPFs return HTTP 422.
+
+2. **No Duplicate Pending/Approved**  
+   - A CPF with an existing **pending** or **approved** enrollment cannot register again (HTTP 400).
+
+3. **Rejection Limit**  
+   - More than 3 prior **rejected** enrollments for the same CPF blocks new requests (HTTP 400).
+
+4. **Age Group Check**  
+   - Worker queries the Age Groups API; if the applicant’s age is not within any defined bucket, they are **rejected** with a reason.
+
+5. **Approval Logic**  
+   - If no conflicts and age is valid, status is updated to **approved**.
+
+6. **Failure Handling**  
+   - If Age Groups API is unreachable after retries, enrollment status becomes **failed**.
+
+7. **Timestamps**  
+   - Each enrollment records `created_at` (UTC, timezone-aware) and `processed_at` (UTC) once the worker completes processing.
+
+8. **Durable Messaging & Retries**  
+   - RabbitMQ queue is declared with a dead-letter exchange and message TTL, so un-acked messages automatically retry every 5 minutes.
+
+---
+

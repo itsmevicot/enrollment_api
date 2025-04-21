@@ -1,0 +1,130 @@
+{
+  "info": {
+    "name": "Enrollment API Collection",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+  },
+  "item": [
+    {
+      "name": "Health Check",
+      "request": {
+        "method": "GET",
+        "header": [],
+        "url": {
+          "raw": "{{base_url}}/health",
+          "host": [
+            "{{base_url}}"
+          ],
+          "path": [
+            "health"
+          ]
+        }
+      }
+    },
+    {
+      "name": "List Enrollments",
+      "request": {
+        "method": "GET",
+        "header": [],
+        "url": {
+          "raw": "{{base_url}}/enrollments/",
+          "host": [
+            "{{base_url}}"
+          ],
+          "path": [
+            "enrollments"
+          ]
+        }
+      }
+    },
+    {
+      "name": "Create Valid Enrollment",
+      "request": {
+        "method": "POST",
+        "header": [
+          {
+            "key": "Content-Type",
+            "value": "application/json"
+          }
+        ],
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"name\": \"Alice\",\n  \"cpf\": \"652.535.790-01\",\n  \"age\": 12\n}"
+        },
+        "url": {
+          "raw": "{{base_url}}/enrollments/",
+          "host": [
+            "{{base_url}}"
+          ],
+          "path": [
+            "enrollments"
+          ]
+        }
+      }
+    },
+    {
+      "name": "Create Invalid CPF",
+      "request": {
+        "method": "POST",
+        "header": [
+          {
+            "key": "Content-Type",
+            "value": "application/json"
+          }
+        ],
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"name\": \"Z\",\n  \"cpf\": \"00000000000\",\n  \"age\": 5\n}"
+        },
+        "url": {
+          "raw": "{{base_url}}/enrollments/",
+          "host": [
+            "{{base_url}}"
+          ],
+          "path": [
+            "enrollments"
+          ]
+        }
+      }
+    },
+    {
+      "name": "Get Enrollment by ID",
+      "request": {
+        "method": "GET",
+        "header": [],
+        "url": {
+          "raw": "{{base_url}}/enrollments/:id",
+          "host": [
+            "{{base_url}}"
+          ],
+          "path": [
+            "enrollments",
+            ":id"
+          ]
+        }
+      }
+    },
+    {
+      "name": "Delete Enrollment by ID",
+      "request": {
+        "method": "DELETE",
+        "header": [],
+        "url": {
+          "raw": "{{base_url}}/enrollments/:id",
+          "host": [
+            "{{base_url}}"
+          ],
+          "path": [
+            "enrollments",
+            ":id"
+          ]
+        }
+      }
+    }
+  ],
+  "variable": [
+    {
+      "key": "base_url",
+      "value": "http://localhost:8001"
+    }
+  ]
+}
