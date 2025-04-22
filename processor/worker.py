@@ -1,12 +1,12 @@
-# processor/worker.py
-
 import logging
 import time
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import List, Dict
 
 import httpx
 from bson import ObjectId
+from pika import BasicProperties
+from pika.adapters.blocking_connection import BlockingChannel
 
 from app.clients.age_groups_client import AgeGroupsClient
 from app.config.settings import get_settings
@@ -24,7 +24,10 @@ settings = get_settings()
 db = DatabaseProvider.get_db()
 col = db["enrollments"]
 
-_http = httpx.Client(base_url=settings.age_groups_api_url.rstrip("/"))
+_http = httpx.Client(
+    base_url=settings.age_groups_api_url.rstrip("/"),
+    auth=(settings.age_groups_api_username, settings.age_groups_api_password),
+)
 _age_client = AgeGroupsClient(settings.age_groups_api_url, _http)
 
 
@@ -40,6 +43,26 @@ def fetch_age_groups_with_retry(max_attempts: int = 5) -> List[Dict]:
                 raise
             delay += 3 * attempt
             time.sleep(delay)
+
+
+def requeue_stale_messages(channel: BlockingChannel) -> None:
+    """
+    On startup, republish any enrollment IDs
+    that are still pending and have never been processed.
+    """
+    cursor = col.find({
+        "status": EnrollmentStatus.pending.value,
+        "processed_at": None
+    })
+    for doc in cursor:
+        eid = str(doc["_id"])
+        logger.info(f"Re‑enqueuing stale enrollment {eid}")
+        channel.basic_publish(
+            exchange="",
+            routing_key=settings.rabbit_queue_name,
+            body=eid.encode("utf-8"),
+            properties=BasicProperties(delivery_mode=2),
+        )
 
 
 def process_one(ch, method, props, body):
@@ -60,7 +83,7 @@ def process_one(ch, method, props, body):
             {"_id": ObjectId(enrollment_id)},
             {"$set": {
                 "status": EnrollmentStatus.failed.value,
-                "processed_at": datetime.utcnow()
+                "processed_at": datetime.now(timezone.utc)
             }}
         )
         return ch.basic_ack(delivery_tag=method.delivery_tag)
@@ -68,7 +91,6 @@ def process_one(ch, method, props, body):
     age = doc["age"]
     cpf = doc["cpf"]
 
-    # 1) age‑group check
     if not any(g["min_age"] <= age <= g["max_age"] for g in groups):
         reason = f"Age {age} not in any group"
         logger.info(f"Rejecting {enrollment_id}: {reason}")
@@ -77,12 +99,11 @@ def process_one(ch, method, props, body):
             {"$set": {
                 "status": EnrollmentStatus.rejected.value,
                 "rejection_reason": reason,
-                "processed_at": datetime.utcnow()
+                "processed_at": datetime.now(timezone.utc)
             }}
         )
         return ch.basic_ack(delivery_tag=method.delivery_tag)
 
-    # 2) duplicate‑approved check
     if col.count_documents({
             "cpf": cpf,
             "status": EnrollmentStatus.approved.value
@@ -94,18 +115,17 @@ def process_one(ch, method, props, body):
             {"$set": {
                 "status": EnrollmentStatus.rejected.value,
                 "rejection_reason": reason,
-                "processed_at": datetime.utcnow()
+                "processed_at": datetime.now(timezone.utc)
             }}
         )
         return ch.basic_ack(delivery_tag=method.delivery_tag)
 
-    # 3) approve
     logger.info(f"Approving enrollment {enrollment_id}")
     col.update_one(
         {"_id": ObjectId(enrollment_id)},
         {"$set": {
             "status": EnrollmentStatus.approved.value,
-            "processed_at": datetime.utcnow()
+            "processed_at": datetime.now(timezone.utc)
         }}
     )
     return ch.basic_ack(delivery_tag=method.delivery_tag)
@@ -115,6 +135,7 @@ def main():
     logger.info("Worker starting up, connecting to RabbitMQ…")
     ch = RabbitMQProvider.get_channel()
     ch.basic_qos(prefetch_count=1)
+    requeue_stale_messages(ch)
     ch.basic_consume(
         queue=settings.rabbit_queue_name,
         on_message_callback=process_one

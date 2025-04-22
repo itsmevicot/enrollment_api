@@ -1,5 +1,6 @@
 from typing import List, Optional
 import pika
+from pika.exceptions import AMQPConnectionError
 from pymongo.errors import DuplicateKeyError
 from fastapi import HTTPException, status
 
@@ -14,7 +15,6 @@ settings = get_settings()
 class EnrollmentService:
     def __init__(self, repo: EnrollmentRepository):
         self.repo = repo
-        self._channel = RabbitMQProvider.get_channel()
 
     def create(self, payload: EnrollmentCreate, owner: str) -> EnrollmentRead:
         if self.repo.count_by_cpf_and_status(
@@ -22,14 +22,20 @@ class EnrollmentService:
             [EnrollmentStatus.pending.value, EnrollmentStatus.approved.value],
             owner
         ):
-            raise ValueError("An enrollment is already pending or approved for this CPF")
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="An enrollment is already pending or approved for this CPF"
+            )
 
         if self.repo.count_by_cpf_and_status(
             payload.cpf,
             [EnrollmentStatus.rejected.value],
             owner
         ) >= 3:
-            raise ValueError("Too many rejections; you cannot request again")
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Too many rejections; you cannot request again"
+            )
 
         try:
             enrollment = self.repo.create(payload, owner)
@@ -39,7 +45,15 @@ class EnrollmentService:
                 detail="An enrollment is already pending or approved for this CPF"
             )
 
-        self._channel.basic_publish(
+        try:
+            channel = RabbitMQProvider.get_channel()
+        except AMQPConnectionError:
+            raise HTTPException(
+                status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+                detail="Cannot connect to RabbitMQ",
+            )
+
+        channel.basic_publish(
             exchange="",
             routing_key=settings.rabbit_queue_name,
             body=enrollment.id.encode("utf-8"),

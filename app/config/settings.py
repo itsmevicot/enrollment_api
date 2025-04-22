@@ -14,6 +14,8 @@ class Settings(BaseSettings):
     rabbit_uri: str
     rabbit_queue_name: str
     age_groups_api_url: str
+    age_groups_api_username: str
+    age_groups_api_password: str
 
 
 def get_settings() -> Settings:
