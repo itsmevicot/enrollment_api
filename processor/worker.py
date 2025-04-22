@@ -5,8 +5,6 @@ from typing import List, Dict
 
 import httpx
 from bson import ObjectId
-from pika import BasicProperties
-from pika.adapters.blocking_connection import BlockingChannel
 
 from app.clients.age_groups_client import AgeGroupsClient
 from app.config.settings import get_settings
@@ -45,26 +43,6 @@ def fetch_age_groups_with_retry(max_attempts: int = 5) -> List[Dict]:
             time.sleep(delay)
 
 
-def requeue_stale_messages(channel: BlockingChannel) -> None:
-    """
-    On startup, republish any enrollment IDs
-    that are still pending and have never been processed.
-    """
-    cursor = col.find({
-        "status": EnrollmentStatus.pending.value,
-        "processed_at": None
-    })
-    for doc in cursor:
-        eid = str(doc["_id"])
-        logger.info(f"Re‑enqueuing stale enrollment {eid}")
-        channel.basic_publish(
-            exchange="",
-            routing_key=settings.rabbit_queue_name,
-            body=eid.encode("utf-8"),
-            properties=BasicProperties(delivery_mode=2),
-        )
-
-
 def process_one(ch, method, props, body):
     enrollment_id = body.decode()
     logger.info(f"⏳ Received message for enrollment_id={enrollment_id!r}")
@@ -78,7 +56,7 @@ def process_one(ch, method, props, body):
     try:
         groups = fetch_age_groups_with_retry()
     except Exception:
-        logger.error(f"Marking enrollment {enrollment_id} as failed")
+        logger.error(f"Marking enrollment {enrollment_id} as failed and NACKing for retry")
         col.update_one(
             {"_id": ObjectId(enrollment_id)},
             {"$set": {
@@ -86,7 +64,8 @@ def process_one(ch, method, props, body):
                 "processed_at": datetime.now(timezone.utc)
             }}
         )
-        return ch.basic_ack(delivery_tag=method.delivery_tag)
+        ch.basic_nack(delivery_tag=method.delivery_tag, requeue=False)
+        return
 
     age = doc["age"]
     cpf = doc["cpf"]
@@ -135,12 +114,11 @@ def main():
     logger.info("Worker starting up, connecting to RabbitMQ…")
     ch = RabbitMQProvider.get_channel()
     ch.basic_qos(prefetch_count=1)
-    requeue_stale_messages(ch)
     ch.basic_consume(
         queue=settings.rabbit_queue_name,
         on_message_callback=process_one
     )
-    logger.info(f" [*] Waiting for messages on queue {settings.rabbit_queue_name!r}")
+    logger.info(f"[*] Waiting for messages on queue '{settings.rabbit_queue_name}'")
     ch.start_consuming()
 
 
