@@ -19,7 +19,7 @@ flowchart LR
 ```
 
 1. **API** writes the enrollment document to MongoDB with `status = pending`, then publishes the new ID to RabbitMQ.  
-2. **Worker** (standalone script) consumes the queue, calls the EnrollmentAPI over HTTP, and updates the document in MongoDB to `approved`, `rejected`, or `failed`, recording timestamps.  
+2. **Worker** (standalone script) consumes the queue, calls the Age Groups API over HTTP, and updates the document in MongoDB to `approved`, `rejected`, or `failed`, recording timestamps.  
 
 ---
 
