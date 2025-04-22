@@ -5,6 +5,7 @@ from typing import List, Dict
 
 import httpx
 from bson import ObjectId
+from pika.adapters.blocking_connection import BlockingChannel
 
 from app.clients.age_groups_client import AgeGroupsClient
 from app.config.settings import get_settings
@@ -19,8 +20,6 @@ logging.basicConfig(
 logger = logging.getLogger("worker")
 
 settings = get_settings()
-db = DatabaseProvider.get_db()
-col = db["enrollments"]
 
 _http = httpx.Client(
     base_url=settings.age_groups_api_url.rstrip("/"),
@@ -43,9 +42,11 @@ def fetch_age_groups_with_retry(max_attempts: int = 5) -> List[Dict]:
             time.sleep(delay)
 
 
-def process_one(ch, method, props, body):
+def process_one(ch: BlockingChannel, method, props, body: bytes):
+    col = DatabaseProvider.get_db()["enrollments"]
     enrollment_id = body.decode()
     logger.info(f"⏳ Received message for enrollment_id={enrollment_id!r}")
+
     doc = col.find_one({"_id": ObjectId(enrollment_id)})
     if not doc:
         logger.warning(f"No document found for {enrollment_id!r}; acking and skipping")
@@ -56,7 +57,7 @@ def process_one(ch, method, props, body):
     try:
         groups = fetch_age_groups_with_retry()
     except Exception:
-        logger.error(f"Marking enrollment {enrollment_id} as failed and NACKing for retry")
+        logger.error(f"Marking enrollment {enrollment_id} as failed and NACKing")
         col.update_one(
             {"_id": ObjectId(enrollment_id)},
             {"$set": {
@@ -67,8 +68,25 @@ def process_one(ch, method, props, body):
         ch.basic_nack(delivery_tag=method.delivery_tag, requeue=False)
         return
 
-    age = doc["age"]
-    cpf = doc["cpf"]
+    age = doc.get("age")
+    cpf = doc.get("cpf")
+
+    rejected_count = col.count_documents({
+        "cpf": cpf,
+        "status": EnrollmentStatus.rejected.value
+    })
+    if rejected_count >= 3:
+        reason = "Too many rejections; you cannot request again"
+        logger.info(f"Rejecting {enrollment_id}: {reason}")
+        col.update_one(
+            {"_id": ObjectId(enrollment_id)},
+            {"$set": {
+                "status": EnrollmentStatus.rejected.value,
+                "rejection_reason": reason,
+                "processed_at": datetime.now(timezone.utc)
+            }}
+        )
+        return ch.basic_ack(delivery_tag=method.delivery_tag)
 
     if not any(g["min_age"] <= age <= g["max_age"] for g in groups):
         reason = f"Age {age} not in any group"

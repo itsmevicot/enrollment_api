@@ -73,3 +73,38 @@ def mock_mongo(monkeypatch):
 def client():
     """TestClient bound to our FastAPI app."""
     return TestClient(app)
+
+@pytest.fixture(autouse=True)
+def clear_enrollments_collection():
+    """Ensure enrollments collection is empty before/after each test."""
+    db = DatabaseProvider.get_db()
+    db.drop_collection("enrollments")
+    yield
+    db.drop_collection("enrollments")
+
+
+@pytest.fixture
+def dummy_channel():
+    """Capture basic_ack/basic_nack calls."""
+    class DummyChannel:
+        def __init__(self):
+            self.acked = []
+            self.nacked = []
+
+        def basic_ack(self, delivery_tag):
+            self.acked.append(delivery_tag)
+
+        def basic_nack(self, delivery_tag, requeue):
+            self.nacked.append((delivery_tag, requeue))
+
+    return DummyChannel()
+
+
+@pytest.fixture
+def dummy_method():
+    """Provides a .delivery_tag attribute."""
+    class DummyMethod:
+        def __init__(self, tag=1):
+            self.delivery_tag = tag
+
+    return DummyMethod()
