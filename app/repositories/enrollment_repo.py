@@ -15,9 +15,10 @@ class EnrollmentRepository:
     def _doc_to_model(self, doc) -> EnrollmentRead:
         return EnrollmentRead.from_document(doc)
 
-    def create(self, payload: EnrollmentCreate) -> EnrollmentRead:
+    def create(self, payload: EnrollmentCreate, owner: str) -> EnrollmentRead:
         data = payload.model_dump()
         data["cpf"] = normalize_cpf(data["cpf"])
+        data["owner"] = owner
         data["status"] = EnrollmentStatus.pending.value
         data["rejection_reason"] = None
         data["created_at"] = datetime.now(timezone.utc)
@@ -27,20 +28,24 @@ class EnrollmentRepository:
         doc = {**data, "_id": result.inserted_id}
         return self._doc_to_model(doc)
 
-    def get(self, id: str) -> Optional[EnrollmentRead]:
+    def list(self, owner: str) -> List[EnrollmentRead]:
+        docs = self.collection.find({"owner": owner})
+        return [self._doc_to_model(d) for d in docs]
+
+    def get(self, id: str, owner: str) -> Optional[EnrollmentRead]:
         try:
             oid = ObjectId(id)
         except (bson_errors.InvalidId, TypeError):
             return None
-        doc = self.collection.find_one({"_id": oid})
+        doc = self.collection.find_one({"_id": oid, "owner": owner})
         return doc and self._doc_to_model(doc)
 
-    def delete(self, id: str) -> bool:
+    def delete(self, id: str, owner: str) -> bool:
         try:
             oid = ObjectId(id)
         except (bson_errors.InvalidId, TypeError):
             return False
-        res = self.collection.delete_one({"_id": oid})
+        res = self.collection.delete_one({"_id": oid, "owner": owner})
         return res.deleted_count > 0
 
     def update_status(self, id: str, new_status: EnrollmentStatus) -> bool:
@@ -67,11 +72,14 @@ class EnrollmentRepository:
             }}
         )
 
-    def list(self) -> List[EnrollmentRead]:
-        return [self._doc_to_model(doc) for doc in self.collection.find()]
-
-    def count_by_cpf_and_status(self, cpf: str, statuses: List[str]) -> int:
+    def count_by_cpf_and_status(
+        self,
+        cpf: str,
+        statuses: List[str],
+        owner: str
+    ) -> int:
         return self.collection.count_documents({
             "cpf": cpf,
-            "status": {"$in": statuses}
+            "status": {"$in": statuses},
+            "owner": owner
         })

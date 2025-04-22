@@ -1,6 +1,7 @@
 from typing import List, Optional
-
 import pika
+from pymongo.errors import DuplicateKeyError
+from fastapi import HTTPException, status
 
 from app.repositories.enrollment_repo import EnrollmentRepository
 from app.schemas.enrollment_schema import EnrollmentCreate, EnrollmentRead
@@ -11,39 +12,32 @@ from app.config.settings import get_settings
 settings = get_settings()
 
 class EnrollmentService:
-    """
-    - Applies pre‑persist business rules (no duplicate pending/approved;
-      no more than 3 prior rejections).
-    - Persists the enrollment as `status = pending`.
-    - Publishes its ID to RabbitMQ for asynchronous processing.
-    """
-    def __init__(
-        self,
-        repo: EnrollmentRepository,
-    ):
+    def __init__(self, repo: EnrollmentRepository):
         self.repo = repo
         self._channel = RabbitMQProvider.get_channel()
 
-    def list(self) -> List[EnrollmentRead]:
-        return self.repo.list()
-
-    def get(self, id: str) -> Optional[EnrollmentRead]:
-        return self.repo.get(id)
-
-    def create(self, payload: EnrollmentCreate) -> EnrollmentRead:
+    def create(self, payload: EnrollmentCreate, owner: str) -> EnrollmentRead:
         if self.repo.count_by_cpf_and_status(
             payload.cpf,
             [EnrollmentStatus.pending.value, EnrollmentStatus.approved.value],
+            owner
         ):
             raise ValueError("An enrollment is already pending or approved for this CPF")
 
         if self.repo.count_by_cpf_and_status(
             payload.cpf,
             [EnrollmentStatus.rejected.value],
+            owner
         ) >= 3:
             raise ValueError("Too many rejections; you cannot request again")
 
-        enrollment = self.repo.create(payload)
+        try:
+            enrollment = self.repo.create(payload, owner)
+        except DuplicateKeyError:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="An enrollment is already pending or approved for this CPF"
+            )
 
         self._channel.basic_publish(
             exchange="",
@@ -51,8 +45,13 @@ class EnrollmentService:
             body=enrollment.id.encode("utf-8"),
             properties=pika.BasicProperties(delivery_mode=2),
         )
-
         return enrollment
 
-    def delete(self, id: str) -> bool:
-        return self.repo.delete(id)
+    def list(self, owner: str) -> List[EnrollmentRead]:
+        return self.repo.list(owner)
+
+    def get(self, id: str, owner: str) -> Optional[EnrollmentRead]:
+        return self.repo.get(id, owner)
+
+    def delete(self, id: str, owner: str) -> bool:
+        return self.repo.delete(id, owner)
